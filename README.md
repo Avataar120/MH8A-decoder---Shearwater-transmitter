@@ -13,11 +13,14 @@ You need :
 ![image](https://github.com/user-attachments/assets/dbb9efec-de91-46df-9ee4-e331d59c5bc5)
 
 Connect the + of the speaker on the GPIO4 of the ESP32-S3
+
 Connect the - of the speaker on one of the GND pins of the ESP32-S3
+
 Connect your computer to the ESP32-S3 on the UART USB socket
 
 ## Software
 You'll need Visual Studio Code + Platformio
+
 Then just download my code and upload it to your ESP32-S3
 
 ## Physical setup
@@ -25,6 +28,7 @@ Then just download my code and upload it to your ESP32-S3
 ![image](https://github.com/user-attachments/assets/66615d05-e8f4-48cf-8a8e-36d89d0bf244)
 
 Put the speaker on the aqualung / shearwater transmitter
+
 Read the values on the console
 
 ## Result
