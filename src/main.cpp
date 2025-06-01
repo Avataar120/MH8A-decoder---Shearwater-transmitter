@@ -1,119 +1,148 @@
 #include <Arduino.h>
-#include "esp_timer.h"
 
-#define ADC_PIN 4 // GPIO4 = ADC1_CHANNEL_3 sur l'ESP32-S3
+#define ADC_PIN 4        // GPIO4
+#define ADC_THRESHOLD 80 // 80mV
+
+#define TIME_MIN_0 1100       // us
+#define TIME_MAX_0 2300       // us
+#define TIME_MIN_1 TIME_MAX_0 // us
+#define TIME_MAX_1 5000       // us
+#define TIME_END_FRAME 15000  // us
+#define TIMEOUT 8000000       // us
+
+static String frame = "";
 
 typedef enum
 {
   waitForBit,
   receiveBit,
   decodeFrame,
-  waitForFrame,
-  nocomm
+  waitForFrame
 } tReceptionState;
 
 void setup()
 {
-  Serial.begin(115200);
-  delay(1000);
 
+  // Serial init
+  Serial.begin(115200);
+  delay(500);
+
+  // Set ADC resolution at the minimum to go faster
+  // Set attenuation at 0db as signal is very low (100mV)
   analogReadResolution(4);
   analogSetAttenuation(ADC_0db);
-  Serial.println("Initialisation terminée. Lecture ADC en cours...");
+
+  // Reserve 64 bytes to avoid alloc / dealloc each time
+  frame.reserve(64);
+
+  Serial.println("Init succesfull");
 }
 
-String GetChar(String s)
+// For tank ID, the protocol is using a dedicated coding for each number
+// This function will replace the 4 bits of each digit by its integer value
+inline String GetChar(String s)
 {
   if (s == "1010")
     return "0";
-  if (s == "1011")
+  else if (s == "1011")
     return "1";
-  if (s == "1100")
+  else if (s == "1100")
     return "2";
-  if (s == "0011")
+  else if (s == "0011")
     return "3";
-  if (s == "1101")
+  else if (s == "1101")
     return "4";
-  if (s == "0101")
+  else if (s == "0101")
     return "5";
-  if (s == "0110")
+  else if (s == "0110")
     return "6";
-  if (s == "0111")
+  else if (s == "0111")
     return "7";
-  if (s == "1110")
+  else if (s == "1110")
     return "8";
-  if (s == "1001")
+  else if (s == "1001")
     return "9";
-  return "!";
+  else
+    return "!";
 }
 
-void Decode(String s)
+// This function will decode the frame that has been received
+void Decode(String frameToBeDecoded)
 {
-  Serial.println(s);
-  if (s.length() == 58)
-  {
+  // Display the raw frame
+  Serial.println(frameToBeDecoded);
 
-    String Preamble = s.substring(0, 2);
-    String Sync1 = s.substring(2, 6);
-    String Sync2 = s.substring(6, 10);
+  // If length is not the good one, exit
+  if (frameToBeDecoded.length() != 58)
+    return;
 
-    String ID = "";
-    for (int i = 0; i < 6; i++)
-    {
-      ID += GetChar(s.substring(10 + i * 4, 10 + 4 + i * 4));
-    }
+  // Get the different parts of the frame
+  String Preamble = frameToBeDecoded.substring(0, 2);
+  String Sync1 = frameToBeDecoded.substring(2, 6);
+  String Sync2 = frameToBeDecoded.substring(6, 10);
 
-    int Pressure = std::stoi(s.substring(34, 46).c_str(), nullptr, 2);
+  // For ID, 6 digits to be replace with the lookup table
+  String ID = "";
+  for (int i = 0; i < 6; i++)
+    ID += GetChar(frameToBeDecoded.substring(10 + i * 4, 10 + 4 + i * 4));
 
-    String Batt = s.substring(46, 50);
-    if (Batt = "0000")
-      Batt = "OK";
-    else if (Batt = "0010")
-      Batt = "Low";
-    else if (Batt = "0001")
-      Batt = "Critical";
+  // Pressure is encoded in PSI - 12bits
+  // The value in the frame is half of the real value
+  int Pressure = std::stoi(frameToBeDecoded.substring(34, 46).c_str(), nullptr, 2);
 
-    int ChecksumCalc = 0;
-    for (int i = 0; i < 12; i++)
-    {
-      int v = std::stoi(s.substring(2 + i * 4, 2 + 4 + i * 4).c_str(), nullptr, 2);
-      ChecksumCalc += v;
-    }
+  // Battery status can be Good, Low, Critical with a specific coding
+  String Batt = frameToBeDecoded.substring(46, 50);
+  Batt = (Batt == "0000") ? "Good" : (Batt == "0010") ? "Low"
+                                 : (Batt == "0001")   ? "Critical"
+                                                      : "Unknown";
 
-    int ChesumMsg = std::stoi(s.substring(50, 58).c_str(), nullptr, 2);
+  // Checksum is calculated as following :
+  // Remove the 2 first bits (Preamble)
+  // Add the integer value of each 4 bits (12 nibbles)
+  int ChecksumCalc = 0;
+  for (int i = 0; i < 12; i++)
+    ChecksumCalc += std::stoi(frameToBeDecoded.substring(2 + i * 4, 2 + 4 + i * 4).c_str(), nullptr, 2);
 
-    Serial.printf("Preamble : %s\n", Preamble.c_str());
-    Serial.printf("Sync1 : %s\n", Sync1.c_str());
-    Serial.printf("Sync2 : %s\n", Sync2.c_str());
-    Serial.printf("ID : %s\n", ID.c_str());
-    Serial.printf("Pressure : %d PSI - %.2f bars\n", Pressure * 2, Pressure * 2 / 14.504);
-    Serial.printf("Battery : %s\n", Batt);
-    Serial.printf("Checksum calc : %d - Checksum message : %d - ", ChecksumCalc, ChesumMsg);
-    if (ChecksumCalc == ChesumMsg)
-      Serial.printf("OK\n\n");
-    else
-      Serial.printf("NOK\n\n");
-  }
+  // Checksum is located in the 8 last bits of the frame
+  int ChesumMsg = std::stoi(frameToBeDecoded.substring(50, 58).c_str(), nullptr, 2);
+
+  // Print all data
+  Serial.printf("Preamble : %s\n", Preamble.c_str());
+  Serial.printf("Sync1 : %s\n", Sync1.c_str());
+  Serial.printf("Sync2 : %s\n", Sync2.c_str());
+  Serial.printf("ID : %s\n", ID.c_str());
+  Serial.printf("Pressure : %d PSI - %.2f bars\n", Pressure * 2, Pressure * 2 / 14.504);
+  Serial.printf("Battery : %s\n", Batt);
+  Serial.printf("Checksum calc : %d - Checksum message : %d => %s\n\n", ChecksumCalc, ChesumMsg, (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
 }
 
 void loop()
 {
-
   static tReceptionState state = waitForBit;
   static uint32_t start = 0;
-  static String s;
 
-  int adcValue = analogReadMilliVolts(ADC_PIN);
-  bool Peak = (adcValue > 80) ? true : false;
-
-  uint32_t delta = 0;
+  // Used to detect the strength of the signal
   static uint32_t SumPeaks = 0;
   static uint32_t NbPeaks = 0;
 
-  uint32_t time = esp_timer_get_time();
+  // Read ADC value and decide if high level
+  int adcValue = analogReadMilliVolts(ADC_PIN);
+  bool Peak = (adcValue > ADC_THRESHOLD);
 
+  // Get current time in µs + calculate the delta from last call
+  uint32_t time = micros();
+  uint32_t delta = time - start;
+
+  // This state machine will read each bit of the signal
+  // Sinusoid 38khz during 1ms + Short pause 1ms is a 0
+  // sinusoid 38khz during 1ms + long pause 2ms is a 1
+  // Purpose is to measure the time between the first high level and then to wait the pause to get the next high level
+  // Normaly 0 is then 1ms sinusoid + 1 ms pause
+  // and 1 is 1ms sinusoid + 2ms pause
   switch (state)
   {
+
+    // In this state, we are waiting for a high level on the ADC pin - we update continuoulsy the start of the timer
   case waitForBit:
     start = time;
 
@@ -122,49 +151,70 @@ void loop()
 
     break;
 
+    // Here we do not touch the timer start value
+    // we look at the next high level - if short time -> we discard as we are still in the sinusoid at 38khz
+    // if between range of 0 -> 0
+    // if between range of 1 -> 1
+    // if long time without signal -> frame is over, ready to be decoded
   case receiveBit:
-    delta = time - start;
+
+    // If high level detected
     if (Peak)
     {
+      // Calculate average of signal strentgh for this frame
       SumPeaks += adcValue;
       NbPeaks++;
 
-      if ((delta > 1000) && (delta <= 2300))
+      // 0 detection
+      if ((delta > TIME_MIN_0) && (delta <= TIME_MAX_0))
       {
-        s += "0";
+        frame += "0";
         state = waitForBit;
       }
-      else if ((delta > 2300) && (delta <= 5000))
+      // 1 detection
+      else if ((delta > TIME_MIN_1) && (delta <= TIME_MAX_1))
       {
-        s += "1";
+        frame += "1";
         state = waitForBit;
       }
     }
-    if (delta > 15000)
+
+    // No high value during long time -> end of frame
+    if (delta > TIME_END_FRAME)
       state = decodeFrame;
 
     break;
 
+    // Frame reception is over -> time to decode it and display it
   case decodeFrame:
+    // display the stats of signal strentgh
     Serial.printf("Average Peaks : %f\n", (float)SumPeaks / NbPeaks);
-    Decode(s);
-    s = "";
+
+    // Decode the frame and display it on the console
+    Decode(frame);
+
+    // Init of variables
+    frame = "";
     SumPeaks = 0;
     NbPeaks = 0;
 
+    // Wait from new frame state
     state = waitForFrame;
     break;
 
+    // Wait for new frame or end of communication if tank is closed / pressure removed from regulator - Com is stopping after 2min
   case waitForFrame:
+
+    // If high level detected -> system is still alive, we start new reading (a new frame is sent every 5s)
     if (Peak)
     {
-      // Serial.printf("Time : %d\n", time - start);
       start = time;
       state = receiveBit;
     }
-    else if (time - start > 10000000)
+    // If no communication for several seconds -> no more communication
+    else if (time - start > TIMEOUT)
     {
-      Serial.printf("No comm\n");
+      Serial.printf("No more communication\n");
       state = waitForBit;
     }
     break;
