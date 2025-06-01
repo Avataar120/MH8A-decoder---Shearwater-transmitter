@@ -15,10 +15,10 @@ typedef enum
 void setup()
 {
   Serial.begin(115200);
-  delay(1000); // Laisse le temps au port série de s'initialiser
+  delay(1000);
 
-  analogReadResolution(10);      // Résolution de 12 bits (0 - 4095)
-  analogSetAttenuation(ADC_0db); // Échelle de tension jusqu’à ~3.3V
+  analogReadResolution(4);
+  analogSetAttenuation(ADC_0db);
   Serial.println("Initialisation terminée. Lecture ADC en cours...");
 }
 
@@ -110,10 +110,12 @@ void loop()
   static uint32_t SumPeaks = 0;
   static uint32_t NbPeaks = 0;
 
+  uint32_t time = esp_timer_get_time();
+
   switch (state)
   {
   case waitForBit:
-    start = esp_timer_get_time();
+    start = time;
 
     if (Peak)
       state = receiveBit;
@@ -121,18 +123,18 @@ void loop()
     break;
 
   case receiveBit:
-    delta = esp_timer_get_time() - start;
+    delta = time - start;
     if (Peak)
     {
       SumPeaks += adcValue;
       NbPeaks++;
 
-      if ((delta > 1200) && (delta <= 2300))
+      if ((delta > 1000) && (delta <= 2300))
       {
         s += "0";
         state = waitForBit;
       }
-      else if ((delta > 2300) && (delta <= 3500))
+      else if ((delta > 2300) && (delta <= 5000))
       {
         s += "1";
         state = waitForBit;
@@ -156,11 +158,11 @@ void loop()
   case waitForFrame:
     if (Peak)
     {
-      // Serial.printf("Time : %d\n", esp_timer_get_time() - start);
-      start = esp_timer_get_time();
+      // Serial.printf("Time : %d\n", time - start);
+      start = time;
       state = receiveBit;
     }
-    else if (esp_timer_get_time() - start > 10000000)
+    else if (time - start > 10000000)
     {
       Serial.printf("No comm\n");
       state = waitForBit;
