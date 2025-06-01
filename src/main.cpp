@@ -3,11 +3,14 @@
 
 #define ADC_PIN 4 // GPIO4 = ADC1_CHANNEL_3 sur l'ESP32-S3
 
-uint32_t start = 0;
-uint32_t stop = 0;
-String s;
-bool New = true;
-bool OneOutOfTwo = true;
+typedef enum
+{
+  waitForBit,
+  receiveBit,
+  decodeFrame,
+  waitForFrame,
+  nocomm
+} tReceptionState;
 
 void setup()
 {
@@ -17,8 +20,6 @@ void setup()
   analogReadResolution(12);      // Résolution de 12 bits (0 - 4095)
   analogSetAttenuation(ADC_0db); // Échelle de tension jusqu’à ~3.3V
   Serial.println("Initialisation terminée. Lecture ADC en cours...");
-
-  start = esp_timer_get_time();
 }
 
 String GetChar(String s)
@@ -97,40 +98,90 @@ void Decode(String s)
 
 void loop()
 {
+
+  static tReceptionState state = waitForBit;
+  static uint32_t start = 0;
+  static String s;
+
   int adcValue = analogReadMilliVolts(ADC_PIN);
-  if (adcValue > 80)
+  bool Peak = (adcValue > 80) ? true : false;
+
+  uint32_t delta = 0;
+  static uint32_t SumPeaks = 0;
+  static uint32_t NbPeaks = 0;
+
+  switch (state)
   {
-    if (New)
-    {
-      start = esp_timer_get_time();
-      New = false;
-    }
 
-    uint32_t delta = esp_timer_get_time() - start;
+  case waitForBit:
+    start = esp_timer_get_time();
+    break;
 
-    if ((delta > 1700) && (delta < 2300))
+  case receiveBit:
+    delta = esp_timer_get_time() - start;
+    if (Peak)
     {
-      s += "0";
-      start = esp_timer_get_time();
+      SumPeaks += adcValue;
+      NbPeaks++;
     }
-    if ((delta > 2700) && (delta < 3500))
-    {
-      s += "1";
-      start = esp_timer_get_time();
-    }
-    if (delta > 6000)
-    {
+    break;
 
-      if (OneOutOfTwo)
+  case decodeFrame:
+    Serial.printf("Average Peaks : %f\n", (float)SumPeaks / NbPeaks);
+    Decode(s);
+    s = "";
+    SumPeaks = 0;
+    NbPeaks = 0;
+    break;
+
+  case waitForFrame:
+    // delta = esp_timer_get_time() - start;
+    break;
+  }
+
+  switch (state)
+  {
+  case waitForBit:
+    if (Peak)
+      state = receiveBit;
+
+    break;
+
+  case receiveBit:
+    if (Peak)
+    {
+      if ((delta > 1200) && (delta <= 2300))
       {
-        Decode(s);
-        OneOutOfTwo = false;
+        s += "0";
+        state = waitForBit;
       }
-      else
-        OneOutOfTwo = true;
-
-      s = "";
-      New = true;
+      else if ((delta > 2300) && (delta <= 3500))
+      {
+        s += "1";
+        state = waitForBit;
+      }
     }
+    if (delta > 15000)
+      state = decodeFrame;
+
+    break;
+
+  case decodeFrame:
+    state = waitForFrame;
+    break;
+
+  case waitForFrame:
+    if (Peak)
+    {
+      start = esp_timer_get_time();
+      state = receiveBit;
+      // break;
+    }
+    // else if (esp_timer_get_time() - start > 20000000)
+    // {
+    //   Serial.printf("No comm\n");
+    //   state = waitForBit;
+    // }
+    break;
   }
 }
