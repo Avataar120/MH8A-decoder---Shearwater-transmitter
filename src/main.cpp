@@ -70,11 +70,14 @@ inline String GetChar(String s)
 void Decode(String frameToBeDecoded)
 {
   // Display the raw frame
-  Serial.println(frameToBeDecoded);
+  // Serial.println(frameToBeDecoded);
 
   // If length is not the good one, exit
   if (frameToBeDecoded.length() != 58)
+  {
+    Serial.println("NOK");
     return;
+  }
 
   // Get the different parts of the frame
   String Preamble = frameToBeDecoded.substring(0, 2);
@@ -107,13 +110,10 @@ void Decode(String frameToBeDecoded)
   int ChesumMsg = std::stoi(frameToBeDecoded.substring(50, 58).c_str(), nullptr, 2);
 
   // Print all data
-  Serial.printf("Preamble : %s\n", Preamble.c_str());
-  Serial.printf("Sync1 : %s\n", Sync1.c_str());
-  Serial.printf("Sync2 : %s\n", Sync2.c_str());
-  Serial.printf("ID : %s\n", ID.c_str());
-  Serial.printf("Pressure : %d PSI - %.2f bars\n", Pressure * 2, Pressure * 2 / 14.504);
-  Serial.printf("Battery : %s\n", Batt);
-  Serial.printf("Checksum calc : %d - Checksum message : %d => %s\n\n", ChecksumCalc, ChesumMsg, (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
+  Serial.printf("ID : %s, ", ID.c_str());
+  Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
+  Serial.printf("Battery : %s, ", Batt);
+  Serial.printf("Checksum : %s, ", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
 }
 
 void loop()
@@ -187,11 +187,14 @@ void loop()
 
     // Frame reception is over -> time to decode it and display it
   case decodeFrame:
-    // display the stats of signal strentgh
-    Serial.printf("Average Peaks : %f\n", (float)SumPeaks / NbPeaks);
+    // Display the time
+    Serial.printf("Time : %.1f, ", float(start) / 1000000);
 
     // Decode the frame and display it on the console
     Decode(frame);
+
+    // display the stats of signal strentgh
+    Serial.printf("Average mV : %f\n", (float)SumPeaks / NbPeaks);
 
     // Init of variables
     frame = "";
