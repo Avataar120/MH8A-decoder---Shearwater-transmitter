@@ -75,7 +75,7 @@ void Decode(String frameToBeDecoded)
   // If length is not the good one, exit
   if (frameToBeDecoded.length() != 58)
   {
-    Serial.println("NOK");
+    Serial.printf("NOK, ");
     return;
   }
 
