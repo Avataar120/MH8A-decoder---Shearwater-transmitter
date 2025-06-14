@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
 #define ADC_PIN 4        // GPIO4
-#define ADC_THRESHOLD 80 // 80mV
+#define ADC_THRESHOLD 300 // 80mV
 
 #define TIME_MIN_0 1100       // us
 #define TIME_MAX_0 2300       // us
