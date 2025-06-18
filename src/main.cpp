@@ -1,7 +1,8 @@
 #include <Arduino.h>
+#include <Adafruit_SSD1306.h>
 
 #define ADC_PIN 4        // GPIO4
-#define ADC_THRESHOLD 300 // 80mV
+#define ADC_THRESHOLD 80 // 80mV w/o AOP / 300mV w/ AOP
 
 #define TIME_MIN_0 1100       // us
 #define TIME_MAX_0 2300       // us
@@ -9,6 +10,9 @@
 #define TIME_MAX_1 5000       // us
 #define TIME_END_FRAME 15000  // us
 #define TIMEOUT 8000000       // us
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
 
 static String frame = "";
 
@@ -19,6 +23,13 @@ typedef enum
   decodeFrame,
   waitForFrame
 } tReceptionState;
+
+#define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3c ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+#define I2C_SDA 35
+#define I2C_SCL 36
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 void setup()
 {
@@ -35,7 +46,26 @@ void setup()
   // Reserve 64 bytes to avoid alloc / dealloc each time
   frame.reserve(64);
 
+  // Init of I2C for SSD1306
+  pinMode(I2C_SDA, INPUT_PULLUP);
+  pinMode(I2C_SCL, INPUT_PULLUP);
+  Wire.begin(I2C_SDA, I2C_SCL);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS))
+  {
+    Serial.println(F("Display init failed"));
+    for (;;)
+      ; // Don't proceed, loop forever
+  }
+
   Serial.println("Init succesfull");
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextSize(2);
+  display.setRotation(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.display();
 }
 
 // For tank ID, the protocol is using a dedicated coding for each number
@@ -114,6 +144,17 @@ void Decode(String frameToBeDecoded)
   Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
   Serial.printf("Battery : %s, ", Batt);
   Serial.printf("Checksum : %s, ", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
+
+  // Print data on SSD1306 screen
+  if (ChecksumCalc == ChesumMsg)
+  {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.printf("ID: %s\n", ID.c_str());
+    display.printf("P : %.2f\n", Pressure * 2 / 14.504);
+    display.printf("B : %s\n", Batt);
+    display.display();
+  }
 }
 
 void loop()
@@ -218,6 +259,12 @@ void loop()
     else if (time - start > TIMEOUT)
     {
       Serial.printf("No more communication\n");
+
+      display.clearDisplay();
+      display.setCursor(0, 48);
+      display.printf("No comm");
+      display.display();
+
       state = waitForBit;
     }
     break;
