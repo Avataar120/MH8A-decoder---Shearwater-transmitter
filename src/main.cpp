@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include <Adafruit_SSD1306.h>
 
-#define ADC_PIN 4        // GPIO4
-#define ADC_THRESHOLD 80 // 80mV w/o AOP / 300mV w/ AOP
+#define ADC_PIN 4         // GPIO4
+#define ADC_THRESHOLD 300 // 80mV w/o AOP / 300mV w/ AOP
 
 #define PIN_MOSFET_33V 7 // GPIO 7
 #define PIN_WAKE_UP 0    // GPIO 0
