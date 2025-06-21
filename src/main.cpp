@@ -1,10 +1,8 @@
 #include <Arduino.h>
 #include <Adafruit_SSD1306.h>
 
-#define ADC_PIN_RECEIVER 4 // GPIO4
+#define INT_PIN_RECEIVER 4 // GPIO4
 #define ADC_PIN_BATTERY 10 // GPIO10
-
-#define ADC_THRESHOLD 1500 // 80mV w/o AOP / 1000mV w/ AOP
 
 #define PIN_MOSFET_33V 7 // GPIO 7
 #define PIN_WAKE_UP 0    // GPIO 0
@@ -25,6 +23,9 @@
 
 static String frame = "";
 bool FirstTime = 1;
+
+// Shared variable between interrupt and main code
+volatile bool Peak = 0;
 
 typedef enum
 {
@@ -163,6 +164,12 @@ void deactivateBoardPower()
   gpio_deep_sleep_hold_en();
 }
 
+// Peak = 1 when rising edge on the interrupt pin
+void IRAM_ATTR ProcessIntPin()
+{
+  Peak = 1;
+}
+
 void setup()
 {
 
@@ -180,6 +187,10 @@ void setup()
 
   activateBoardPower();
   activateDisplay();
+
+  // Reading will be done trough interrupt thanks to AOP on the board
+  pinMode(INT_PIN_RECEIVER, INPUT);
+  attachInterrupt(digitalPinToInterrupt(INT_PIN_RECEIVER), ProcessIntPin, RISING);
 
   startMillis = millis();
 }
@@ -237,7 +248,7 @@ void LiveIndicator()
     FirstTime = 0;
   }
   else
-    display.fillRect(0, 48, 20, 16, BLACK);
+    display.fillRect(0, 48, 64, 16, BLACK);
 
   display.setCursor(0, 48);
   display.printf("%c", Buffer[index]);
@@ -248,7 +259,7 @@ void LiveIndicator()
 }
 
 // This function will decode the frame that has been received
-void Decode(String frameToBeDecoded)
+void Decode(String frameToBeDecoded, int time)
 {
   // Display the raw frame
   // Serial.println(frameToBeDecoded);
@@ -256,7 +267,7 @@ void Decode(String frameToBeDecoded)
   // If length is not the good one, exit
   if (frameToBeDecoded.length() != 58)
   {
-    Serial.printf("NOK, ");
+    Serial.printf("NOK\n");
     return;
   }
 
@@ -294,7 +305,7 @@ void Decode(String frameToBeDecoded)
   Serial.printf("ID : %s, ", ID.c_str());
   Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
   Serial.printf("Battery : %s, ", Batt);
-  Serial.printf("Checksum : %s, ", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
+  Serial.printf("Checksum : %s\n", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
 
   // Print data on SSD1306 screen
   if (ChecksumCalc == ChesumMsg)
@@ -307,7 +318,11 @@ void Decode(String frameToBeDecoded)
 
     // Update the live indicator in the bottom left of the screen
     LiveIndicator();
+    display.setCursor(20, 56);
+    display.setTextSize(1);
+    display.printf("%.1f s", float(time) / 1000000);
     display.display();
+    display.setTextSize(2);
   }
 }
 
@@ -325,9 +340,10 @@ void loop()
     static uint32_t SumPeaks = 0;
     static uint32_t NbPeaks = 0;
 
-    // Read ADC value and decide if high level
-    int adcValueReceiver = analogReadMilliVolts(ADC_PIN_RECEIVER);
-    bool Peak = (adcValueReceiver > ADC_THRESHOLD);
+    // Read ADC value and decide if high level ------ Former system with ADC reading
+    // int adcValueReceiver = analogReadMilliVolts(ADC_PIN_RECEIVER);
+    // bool Peak = (adcValueReceiver > ADC_THRESHOLD);
+    // int adcValueReceiver = 0;
 
     // Get current time in µs + calculate the delta from last call
     uint32_t time = micros();
@@ -355,7 +371,11 @@ void loop()
       start = time;
 
       if (Peak)
+      {
         state = receiveBit;
+        // Peak = 0;
+        // Serial.println("Peak");
+      }
 
       break;
 
@@ -369,9 +389,7 @@ void loop()
       // If high level detected
       if (Peak)
       {
-        // Calculate average of signal strentgh for this frame
-        SumPeaks += adcValueReceiver;
-        NbPeaks++;
+        Peak = 0;
 
         // 0 detection
         if ((delta > TIME_MIN_0) && (delta <= TIME_MAX_0))
@@ -399,10 +417,7 @@ void loop()
       Serial.printf("Time : %.1f, ", float(start) / 1000000);
 
       // Decode the frame and display it on the console
-      Decode(frame);
-
-      // display the stats of signal strentgh
-      Serial.printf("Average mV : %f\n", (float)SumPeaks / NbPeaks);
+      Decode(frame, start);
 
       // Init of variables
       frame = "";
@@ -424,6 +439,7 @@ void loop()
       // If high level detected -> system is still alive, we start new reading (a new frame is sent every 5s)
       if (Peak)
       {
+        // Peak = 0;
         start = time;
         state = receiveBit;
       }
