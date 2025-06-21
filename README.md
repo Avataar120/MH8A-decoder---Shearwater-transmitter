@@ -9,6 +9,10 @@ You need :
 - a 8ohm / 2W cheap speaker : [Amazon - no affiliation](https://www.amazon.fr/dp/B00O9YGQ42?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - few wires and a soldering iron
 
+## Important :
+If you are just using an ESP32-S3 without operational amplifier to amplify the speaker signal -> you need to use the v2.0 release.
+From v3.0 release, the SW is using interrupt reading for more acccuracy, and it needs to get an amplified signal from the speaker with an AOP (for instance TLV2371DBV)
+
 ## Wirings
 ![image](https://github.com/user-attachments/assets/dbb9efec-de91-46df-9ee4-e331d59c5bc5)
 
