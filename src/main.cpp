@@ -4,7 +4,7 @@
 #define ADC_PIN_RECEIVER 4 // GPIO4
 #define ADC_PIN_BATTERY 10 // GPIO10
 
-#define ADC_THRESHOLD 300 // 80mV w/o AOP / 300mV w/ AOP
+#define ADC_THRESHOLD 1500 // 80mV w/o AOP / 1000mV w/ AOP
 
 #define PIN_MOSFET_33V 7 // GPIO 7
 #define PIN_WAKE_UP 0    // GPIO 0
@@ -16,14 +16,15 @@
 #define TIME_END_FRAME 15000  // us
 #define TIMEOUT 8000000       // us
 
-#define TIME_TO_SLEEP 30000 // ms
+#define TIME_TO_SLEEP 60000 // ms
 
-#define NB_BATTERY_FILTER 10 // # of values for filtering
+#define NB_BATTERY_FILTER 5 // # of values for filtering
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 
 static String frame = "";
+bool FirstTime = 1;
 
 typedef enum
 {
@@ -43,14 +44,27 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 unsigned long startMillis;
 
 // Read battery voltage and filter it on NB_BATTERY_FILTER values
-float ComputeBatteryVoltage()
+float ComputeBatteryVoltage(bool raz)
 {
+  static int startMicros = 0;
+  static int nb = 0;
+  float Result = -1.0;
+
+  if (raz)
+    nb = 0;
+
+  if ((nb > 8) || (micros() - startMicros) < 500000)
+  {
+    return Result;
+  }
+
+  nb++;
+
   static int Array[NB_BATTERY_FILTER] = {0}; // Buffer to store the values
   static int Next = NB_BATTERY_FILTER - 1;   // Position of the next value to write
   static int Nb = 0;                         // Nb of values already read
   static int Sum = 0;                        // Sum of values
   int LastValue = 0;                         // Last value (to be removed from the sum)
-  float Result = -1.0;
 
   int adcValueReceiver = analogReadMilliVolts(ADC_PIN_BATTERY);
 
@@ -75,6 +89,26 @@ float ComputeBatteryVoltage()
     Sum -= LastValue;
     Result = Sum * 3.0 / NB_BATTERY_FILTER / 1000;
   }
+
+  // If filetring finished -> display the batterie level
+  if (Result != -1.0)
+  {
+    if (FirstTime)
+    {
+      display.fillRect(0, 48, 128, 16, BLACK);
+      FirstTime = 0;
+    }
+    else
+      display.fillRect(64, 48, 64, 16, BLACK);
+
+    display.setTextSize(1);
+    display.setCursor(0, 56);
+    display.printf("              %.2f V", Result);
+    display.display();
+    display.setTextSize(2);
+  }
+
+  startMicros = micros();
 
   return (Result);
 }
@@ -102,7 +136,7 @@ void activateDisplay()
   display.setTextColor(SSD1306_WHITE);
 
   display.setCursor(0, 48);
-  display.printf("Wake up ...");
+  display.printf("Booting ...");
 
   display.display();
 }
@@ -138,7 +172,7 @@ void setup()
 
   // Set ADC resolution at the minimum to go faster
   // Set attenuation at 0db as signal is very low (100mV)
-  analogReadResolution(14);
+  analogReadResolution(8);
   analogSetAttenuation(ADC_11db);
 
   // Reserve 64 bytes to avoid alloc / dealloc each time
@@ -186,6 +220,31 @@ inline String GetChar(String s)
     return "9";
   else
     return "!";
+}
+
+// Display live indicator
+void LiveIndicator()
+{
+  static char Buffer[4] = {'|',
+                           '/',
+                           '-', '\\'};
+
+  static char index = 0;
+
+  if (FirstTime)
+  {
+    display.fillRect(0, 48, 128, 16, BLACK);
+    FirstTime = 0;
+  }
+  else
+    display.fillRect(0, 48, 20, 16, BLACK);
+
+  display.setCursor(0, 48);
+  display.printf("%c", Buffer[index]);
+
+  index++;
+  if (index >= 4)
+    index = 0;
 }
 
 // This function will decode the frame that has been received
@@ -240,19 +299,20 @@ void Decode(String frameToBeDecoded)
   // Print data on SSD1306 screen
   if (ChecksumCalc == ChesumMsg)
   {
-    display.clearDisplay();
+    display.fillRect(0, 0, 128, 48, BLACK);
     display.setCursor(0, 0);
     display.printf("ID: %s\n", ID.c_str());
     display.printf("P : %.2f\n", Pressure * 2 / 14.504);
     display.printf("B : %s\n", Batt);
+
+    // Update the live indicator in the bottom left of the screen
+    LiveIndicator();
     display.display();
   }
 }
 
 void loop()
 {
-
-  static int startMicros = 0;
 
   // Go to sleep after xx secods
   if (millis() - startMillis < TIME_TO_SLEEP)
@@ -264,27 +324,6 @@ void loop()
     // Used to detect the strength of the signal
     static uint32_t SumPeaks = 0;
     static uint32_t NbPeaks = 0;
-
-    // Compute battery voltage
-    // Each 500ms, take one value and filter
-    if ((micros() - startMicros) >= 500000)
-    {
-
-      float BattVoltage = ComputeBatteryVoltage();
-
-      // If filetring finished -> display the batterie level
-      if (BattVoltage != -1.0)
-      {
-        // display.clearDisplay();
-        display.fillRect(0, 48, 128, 16, BLACK);
-        display.setTextSize(1);
-        display.setCursor(0, 56);
-        display.printf("              %.2f V", BattVoltage);
-        display.display();
-        display.setTextSize(2);
-      }
-      startMicros = micros();
-    }
 
     // Read ADC value and decide if high level
     int adcValueReceiver = analogReadMilliVolts(ADC_PIN_RECEIVER);
@@ -309,6 +348,10 @@ void loop()
 
       // In this state, we are waiting for a high level on the ADC pin - we update continuoulsy the start of the timer
     case waitForBit:
+      // Compute battery voltage only if not receiving a frame
+      // Each 500ms, take one value and filter
+      ComputeBatteryVoltage(false);
+
       start = time;
 
       if (Peak)
@@ -368,10 +411,15 @@ void loop()
 
       // Wait from new frame state
       state = waitForFrame;
+      ComputeBatteryVoltage(true);
       break;
 
       // Wait for new frame or end of communication if tank is closed / pressure removed from regulator - Com is stopping after 2min
     case waitForFrame:
+
+      // Compute battery voltage only if not receiving a frame
+      // Each 500ms, take one value and filter
+      ComputeBatteryVoltage(false);
 
       // If high level detected -> system is still alive, we start new reading (a new frame is sent every 5s)
       if (Peak)
@@ -384,7 +432,7 @@ void loop()
       {
         Serial.printf("No more communication\n");
 
-        display.clearDisplay();
+        display.fillRect(0, 48, 128, 16, BLACK);
         display.setCursor(0, 48);
         display.printf("No comm");
         display.display();
@@ -398,7 +446,7 @@ void loop()
   {
     Serial.printf("Going to deep sleep\n");
 
-    display.clearDisplay();
+    display.fillRect(0, 48, 128, 48, BLACK);
     display.setCursor(0, 48);
     display.printf("Sleep ...");
     display.display();
