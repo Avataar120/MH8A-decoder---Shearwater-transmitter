@@ -1,7 +1,9 @@
 #include <Arduino.h>
 #include <Adafruit_SSD1306.h>
 
-#define ADC_PIN 4         // GPIO4
+#define ADC_PIN_RECEIVER 4 // GPIO4
+#define ADC_PIN_BATTERY 10 // GPIO10
+
 #define ADC_THRESHOLD 300 // 80mV w/o AOP / 300mV w/ AOP
 
 #define PIN_MOSFET_33V 7 // GPIO 7
@@ -15,6 +17,8 @@
 #define TIMEOUT 8000000       // us
 
 #define TIME_TO_SLEEP 30000 // ms
+
+#define NB_BATTERY_FILTER 10 // # of values for filtering
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -38,6 +42,43 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 unsigned long startMillis;
 
+// Read battery voltage and filter it on NB_BATTERY_FILTER values
+float ComputeBatteryVoltage()
+{
+  static int Array[NB_BATTERY_FILTER] = {0}; // Buffer to store the values
+  static int Next = NB_BATTERY_FILTER - 1;   // Position of the next value to write
+  static int Nb = 0;                         // Nb of values already read
+  static int Sum = 0;                        // Sum of values
+  int LastValue = 0;                         // Last value (to be removed from the sum)
+  float Result = -1.0;
+
+  int adcValueReceiver = analogReadMilliVolts(ADC_PIN_BATTERY);
+
+  // Put index on the next slot in the buffer - reset to 0 if end of array
+  Next++;
+  if (Next >= NB_BATTERY_FILTER)
+    Next = 0;
+
+  // get the value that is currently in this slot as it will be overwritten
+  LastValue = Array[Next];
+
+  // Put the new value & add to the sum
+  Array[Next] = adcValueReceiver;
+  Sum += adcValueReceiver;
+
+  // If array still not full, just inc the number of values
+  if (Nb < NB_BATTERY_FILTER)
+    Nb++;
+  else
+  // else, we remove from the sum the saved value and return the filtered voltage
+  {
+    Sum -= LastValue;
+    Result = Sum * 3.0 / NB_BATTERY_FILTER / 1000;
+  }
+
+  return (Result);
+}
+
 void activateDisplay()
 {
   // Init of I2C for SSD1306
@@ -59,6 +100,10 @@ void activateDisplay()
   display.setTextSize(2);
   display.setRotation(2);
   display.setTextColor(SSD1306_WHITE);
+
+  display.setCursor(0, 48);
+  display.printf("Wake up ...");
+
   display.display();
 }
 
@@ -93,8 +138,8 @@ void setup()
 
   // Set ADC resolution at the minimum to go faster
   // Set attenuation at 0db as signal is very low (100mV)
-  analogReadResolution(4);
-  analogSetAttenuation(ADC_0db);
+  analogReadResolution(14);
+  analogSetAttenuation(ADC_11db);
 
   // Reserve 64 bytes to avoid alloc / dealloc each time
   frame.reserve(64);
@@ -206,6 +251,9 @@ void Decode(String frameToBeDecoded)
 
 void loop()
 {
+
+  static int startMicros = 0;
+
   // Go to sleep after xx secods
   if (millis() - startMillis < TIME_TO_SLEEP)
   {
@@ -217,9 +265,30 @@ void loop()
     static uint32_t SumPeaks = 0;
     static uint32_t NbPeaks = 0;
 
+    // Compute battery voltage
+    // Each 500ms, take one value and filter
+    if ((micros() - startMicros) >= 500000)
+    {
+
+      float BattVoltage = ComputeBatteryVoltage();
+
+      // If filetring finished -> display the batterie level
+      if (BattVoltage != -1.0)
+      {
+        // display.clearDisplay();
+        display.fillRect(0, 48, 128, 16, BLACK);
+        display.setTextSize(1);
+        display.setCursor(0, 56);
+        display.printf("              %.2f V", BattVoltage);
+        display.display();
+        display.setTextSize(2);
+      }
+      startMicros = micros();
+    }
+
     // Read ADC value and decide if high level
-    int adcValue = analogReadMilliVolts(ADC_PIN);
-    bool Peak = (adcValue > ADC_THRESHOLD);
+    int adcValueReceiver = analogReadMilliVolts(ADC_PIN_RECEIVER);
+    bool Peak = (adcValueReceiver > ADC_THRESHOLD);
 
     // Get current time in µs + calculate the delta from last call
     uint32_t time = micros();
@@ -258,7 +327,7 @@ void loop()
       if (Peak)
       {
         // Calculate average of signal strentgh for this frame
-        SumPeaks += adcValue;
+        SumPeaks += adcValueReceiver;
         NbPeaks++;
 
         // 0 detection
