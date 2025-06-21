@@ -1,7 +1,13 @@
 #include <Arduino.h>
+#include <Adafruit_SSD1306.h>
 
-#define ADC_PIN 4        // GPIO4
-#define ADC_THRESHOLD 300 // 80mV
+#define ADC_PIN_RECEIVER 4 // GPIO4
+#define ADC_PIN_BATTERY 10 // GPIO10
+
+#define ADC_THRESHOLD 1500 // 80mV w/o AOP / 1000mV w/ AOP
+
+#define PIN_MOSFET_33V 7 // GPIO 7
+#define PIN_WAKE_UP 0    // GPIO 0
 
 #define TIME_MIN_0 1100       // us
 #define TIME_MAX_0 2300       // us
@@ -10,7 +16,15 @@
 #define TIME_END_FRAME 15000  // us
 #define TIMEOUT 8000000       // us
 
+#define TIME_TO_SLEEP 60000 // ms
+
+#define NB_BATTERY_FILTER 5 // # of values for filtering
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
 static String frame = "";
+bool FirstTime = 1;
 
 typedef enum
 {
@@ -19,6 +33,135 @@ typedef enum
   decodeFrame,
   waitForFrame
 } tReceptionState;
+
+#define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3c ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+#define I2C_SDA 35
+#define I2C_SCL 36
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+unsigned long startMillis;
+
+// Read battery voltage and filter it on NB_BATTERY_FILTER values
+float ComputeBatteryVoltage(bool raz)
+{
+  static int startMicros = 0;
+  static int nb = 0;
+  float Result = -1.0;
+
+  if (raz)
+    nb = 0;
+
+  if ((nb > 8) || (micros() - startMicros) < 500000)
+  {
+    return Result;
+  }
+
+  nb++;
+
+  static int Array[NB_BATTERY_FILTER] = {0}; // Buffer to store the values
+  static int Next = NB_BATTERY_FILTER - 1;   // Position of the next value to write
+  static int Nb = 0;                         // Nb of values already read
+  static int Sum = 0;                        // Sum of values
+  int LastValue = 0;                         // Last value (to be removed from the sum)
+
+  int adcValueReceiver = analogReadMilliVolts(ADC_PIN_BATTERY);
+
+  // Put index on the next slot in the buffer - reset to 0 if end of array
+  Next++;
+  if (Next >= NB_BATTERY_FILTER)
+    Next = 0;
+
+  // get the value that is currently in this slot as it will be overwritten
+  LastValue = Array[Next];
+
+  // Put the new value & add to the sum
+  Array[Next] = adcValueReceiver;
+  Sum += adcValueReceiver;
+
+  // If array still not full, just inc the number of values
+  if (Nb < NB_BATTERY_FILTER)
+    Nb++;
+  else
+  // else, we remove from the sum the saved value and return the filtered voltage
+  {
+    Sum -= LastValue;
+    Result = Sum * 3.0 / NB_BATTERY_FILTER / 1000;
+  }
+
+  // If filetring finished -> display the batterie level
+  if (Result != -1.0)
+  {
+    if (FirstTime)
+    {
+      display.fillRect(0, 48, 128, 16, BLACK);
+      FirstTime = 0;
+    }
+    else
+      display.fillRect(64, 48, 64, 16, BLACK);
+
+    display.setTextSize(1);
+    display.setCursor(0, 56);
+    display.printf("              %.2f V", Result);
+    display.display();
+    display.setTextSize(2);
+  }
+
+  startMicros = micros();
+
+  return (Result);
+}
+
+void activateDisplay()
+{
+  // Init of I2C for SSD1306
+  pinMode(I2C_SDA, INPUT_PULLUP);
+  pinMode(I2C_SCL, INPUT_PULLUP);
+  Wire.begin(I2C_SDA, I2C_SCL);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS))
+  {
+    Serial.println(F("Display init failed"));
+    for (;;)
+      ; // Don't proceed, loop forever
+  }
+
+  Serial.println("Init succesfull");
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextSize(2);
+  display.setRotation(2);
+  display.setTextColor(SSD1306_WHITE);
+
+  display.setCursor(0, 48);
+  display.printf("Booting ...");
+
+  display.display();
+}
+
+void deactivateDisplay()
+{
+  pinMode(I2C_SDA, INPUT);
+  pinMode(I2C_SCL, INPUT);
+  Wire.end();
+}
+
+void activateBoardPower()
+{
+  gpio_hold_dis((gpio_num_t)PIN_MOSFET_33V);
+  pinMode(PIN_MOSFET_33V, OUTPUT);
+  digitalWrite(PIN_MOSFET_33V, LOW); // Mosfet activated when grid at zero
+}
+
+void deactivateBoardPower()
+{
+  digitalWrite(PIN_MOSFET_33V, HIGH); // Mosfet deactivated when grid at 3.3v
+  pinMode(PIN_MOSFET_33V, INPUT);
+  gpio_hold_en((gpio_num_t)PIN_MOSFET_33V);
+  gpio_deep_sleep_hold_en();
+}
 
 void setup()
 {
@@ -29,13 +172,26 @@ void setup()
 
   // Set ADC resolution at the minimum to go faster
   // Set attenuation at 0db as signal is very low (100mV)
-  analogReadResolution(4);
-  analogSetAttenuation(ADC_0db);
+  analogReadResolution(8);
+  analogSetAttenuation(ADC_11db);
 
   // Reserve 64 bytes to avoid alloc / dealloc each time
   frame.reserve(64);
 
-  Serial.println("Init succesfull");
+  activateBoardPower();
+  activateDisplay();
+
+  startMillis = millis();
+}
+
+void goToSleep()
+{
+  deactivateDisplay();
+  deactivateBoardPower();
+
+  // Wake up with GPIO
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_WAKE_UP, LOW);
+  esp_deep_sleep_start();
 }
 
 // For tank ID, the protocol is using a dedicated coding for each number
@@ -64,6 +220,31 @@ inline String GetChar(String s)
     return "9";
   else
     return "!";
+}
+
+// Display live indicator
+void LiveIndicator()
+{
+  static char Buffer[4] = {'|',
+                           '/',
+                           '-', '\\'};
+
+  static char index = 0;
+
+  if (FirstTime)
+  {
+    display.fillRect(0, 48, 128, 16, BLACK);
+    FirstTime = 0;
+  }
+  else
+    display.fillRect(0, 48, 20, 16, BLACK);
+
+  display.setCursor(0, 48);
+  display.printf("%c", Buffer[index]);
+
+  index++;
+  if (index >= 4)
+    index = 0;
 }
 
 // This function will decode the frame that has been received
@@ -114,112 +295,164 @@ void Decode(String frameToBeDecoded)
   Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
   Serial.printf("Battery : %s, ", Batt);
   Serial.printf("Checksum : %s, ", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
+
+  // Print data on SSD1306 screen
+  if (ChecksumCalc == ChesumMsg)
+  {
+    display.fillRect(0, 0, 128, 48, BLACK);
+    display.setCursor(0, 0);
+    display.printf("ID: %s\n", ID.c_str());
+    display.printf("P : %.2f\n", Pressure * 2 / 14.504);
+    display.printf("B : %s\n", Batt);
+
+    // Update the live indicator in the bottom left of the screen
+    LiveIndicator();
+    display.display();
+  }
 }
 
 void loop()
 {
-  static tReceptionState state = waitForBit;
-  static uint32_t start = 0;
 
-  // Used to detect the strength of the signal
-  static uint32_t SumPeaks = 0;
-  static uint32_t NbPeaks = 0;
-
-  // Read ADC value and decide if high level
-  int adcValue = analogReadMilliVolts(ADC_PIN);
-  bool Peak = (adcValue > ADC_THRESHOLD);
-
-  // Get current time in µs + calculate the delta from last call
-  uint32_t time = micros();
-  uint32_t delta = time - start;
-
-  // This state machine will read each bit of the signal
-  // Sinusoid 38khz during 1ms + Short pause 1ms is a 0
-  // sinusoid 38khz during 1ms + long pause 2ms is a 1
-  // Purpose is to measure the time between the first high level and then to wait the pause to get the next high level
-  // Normaly 0 is then 1ms sinusoid + 1 ms pause
-  // and 1 is 1ms sinusoid + 2ms pause
-  switch (state)
+  // Go to sleep after xx secods
+  if (millis() - startMillis < TIME_TO_SLEEP)
   {
 
-    // In this state, we are waiting for a high level on the ADC pin - we update continuoulsy the start of the timer
-  case waitForBit:
-    start = time;
+    static tReceptionState state = waitForBit;
+    static uint32_t start = 0;
 
-    if (Peak)
-      state = receiveBit;
+    // Used to detect the strength of the signal
+    static uint32_t SumPeaks = 0;
+    static uint32_t NbPeaks = 0;
 
-    break;
+    // Read ADC value and decide if high level
+    int adcValueReceiver = analogReadMilliVolts(ADC_PIN_RECEIVER);
+    bool Peak = (adcValueReceiver > ADC_THRESHOLD);
 
-    // Here we do not touch the timer start value
-    // we look at the next high level - if short time -> we discard as we are still in the sinusoid at 38khz
-    // if between range of 0 -> 0
-    // if between range of 1 -> 1
-    // if long time without signal -> frame is over, ready to be decoded
-  case receiveBit:
+    // Get current time in µs + calculate the delta from last call
+    uint32_t time = micros();
+    uint32_t delta = time - start;
 
-    // If high level detected
-    if (Peak)
+    // When button is pressed, raz of wake up timer
+    if (digitalRead(PIN_WAKE_UP) == LOW)
+      startMillis = millis();
+
+    // This state machine will read each bit of the signal
+    // Sinusoid 38khz during 1ms + Short pause 1ms is a 0
+    // sinusoid 38khz during 1ms + long pause 2ms is a 1
+    // Purpose is to measure the time between the first high level and then to wait the pause to get the next high level
+    // Normaly 0 is then 1ms sinusoid + 1 ms pause
+    // and 1 is 1ms sinusoid + 2ms pause
+    switch (state)
     {
-      // Calculate average of signal strentgh for this frame
-      SumPeaks += adcValue;
-      NbPeaks++;
 
-      // 0 detection
-      if ((delta > TIME_MIN_0) && (delta <= TIME_MAX_0))
-      {
-        frame += "0";
-        state = waitForBit;
-      }
-      // 1 detection
-      else if ((delta > TIME_MIN_1) && (delta <= TIME_MAX_1))
-      {
-        frame += "1";
-        state = waitForBit;
-      }
-    }
+      // In this state, we are waiting for a high level on the ADC pin - we update continuoulsy the start of the timer
+    case waitForBit:
+      // Compute battery voltage only if not receiving a frame
+      // Each 500ms, take one value and filter
+      ComputeBatteryVoltage(false);
 
-    // No high value during long time -> end of frame
-    if (delta > TIME_END_FRAME)
-      state = decodeFrame;
-
-    break;
-
-    // Frame reception is over -> time to decode it and display it
-  case decodeFrame:
-    // Display the time
-    Serial.printf("Time : %.1f, ", float(start) / 1000000);
-
-    // Decode the frame and display it on the console
-    Decode(frame);
-
-    // display the stats of signal strentgh
-    Serial.printf("Average mV : %f\n", (float)SumPeaks / NbPeaks);
-
-    // Init of variables
-    frame = "";
-    SumPeaks = 0;
-    NbPeaks = 0;
-
-    // Wait from new frame state
-    state = waitForFrame;
-    break;
-
-    // Wait for new frame or end of communication if tank is closed / pressure removed from regulator - Com is stopping after 2min
-  case waitForFrame:
-
-    // If high level detected -> system is still alive, we start new reading (a new frame is sent every 5s)
-    if (Peak)
-    {
       start = time;
-      state = receiveBit;
+
+      if (Peak)
+        state = receiveBit;
+
+      break;
+
+      // Here we do not touch the timer start value
+      // we look at the next high level - if short time -> we discard as we are still in the sinusoid at 38khz
+      // if between range of 0 -> 0
+      // if between range of 1 -> 1
+      // if long time without signal -> frame is over, ready to be decoded
+    case receiveBit:
+
+      // If high level detected
+      if (Peak)
+      {
+        // Calculate average of signal strentgh for this frame
+        SumPeaks += adcValueReceiver;
+        NbPeaks++;
+
+        // 0 detection
+        if ((delta > TIME_MIN_0) && (delta <= TIME_MAX_0))
+        {
+          frame += "0";
+          state = waitForBit;
+        }
+        // 1 detection
+        else if ((delta > TIME_MIN_1) && (delta <= TIME_MAX_1))
+        {
+          frame += "1";
+          state = waitForBit;
+        }
+      }
+
+      // No high value during long time -> end of frame
+      if (delta > TIME_END_FRAME)
+        state = decodeFrame;
+
+      break;
+
+      // Frame reception is over -> time to decode it and display it
+    case decodeFrame:
+      // Display the time
+      Serial.printf("Time : %.1f, ", float(start) / 1000000);
+
+      // Decode the frame and display it on the console
+      Decode(frame);
+
+      // display the stats of signal strentgh
+      Serial.printf("Average mV : %f\n", (float)SumPeaks / NbPeaks);
+
+      // Init of variables
+      frame = "";
+      SumPeaks = 0;
+      NbPeaks = 0;
+
+      // Wait from new frame state
+      state = waitForFrame;
+      ComputeBatteryVoltage(true);
+      break;
+
+      // Wait for new frame or end of communication if tank is closed / pressure removed from regulator - Com is stopping after 2min
+    case waitForFrame:
+
+      // Compute battery voltage only if not receiving a frame
+      // Each 500ms, take one value and filter
+      ComputeBatteryVoltage(false);
+
+      // If high level detected -> system is still alive, we start new reading (a new frame is sent every 5s)
+      if (Peak)
+      {
+        start = time;
+        state = receiveBit;
+      }
+      // If no communication for several seconds -> no more communication
+      else if (time - start > TIMEOUT)
+      {
+        Serial.printf("No more communication\n");
+
+        display.fillRect(0, 48, 128, 16, BLACK);
+        display.setCursor(0, 48);
+        display.printf("No comm");
+        display.display();
+
+        state = waitForBit;
+      }
+      break;
     }
-    // If no communication for several seconds -> no more communication
-    else if (time - start > TIMEOUT)
-    {
-      Serial.printf("No more communication\n");
-      state = waitForBit;
-    }
-    break;
+  }
+  else
+  {
+    Serial.printf("Going to deep sleep\n");
+
+    display.fillRect(0, 48, 128, 48, BLACK);
+    display.setCursor(0, 48);
+    display.printf("Sleep ...");
+    display.display();
+
+    sleep(5);
+
+    goToSleep();
   }
 }
