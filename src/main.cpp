@@ -38,17 +38,16 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 unsigned long startMillis;
 RTC_DATA_ATTR uint64_t timestamp = 0;
-// uint64_t timestampWakeup = 0;
 
 // Read battery voltage and filter it on NB_BATTERY_FILTER values
-float ComputeBatteryVoltage()
+void ComputeBatteryVoltage()
 {
   static int startMicros = 0;
   float Result = -1.0;
 
   if (micros() - startMicros < 500000)
   {
-    return Result;
+    return;
   }
 
   static int Array[NB_BATTERY_FILTER] = {0}; // Buffer to store the values
@@ -100,8 +99,6 @@ float ComputeBatteryVoltage()
   }
 
   startMicros = micros();
-
-  return (Result);
 }
 
 void activateDisplay()
@@ -164,8 +161,8 @@ void EmptyBuffer()
 
 // Sinusoid 38khz during 1ms + Short pause 1ms is a 0
 // sinusoid 38khz during 1ms + long pause 2ms is a 1
-// Purpose is to measure the time between the first high level and then to wait the pause to get the next high level
-// Normaly 0 is then 1ms sinusoid + 1 ms pause
+// Purpose is to measure the time between the last high level and then to wait the pause to get the next high level
+// 0 is then 1ms sinusoid + 1 ms pause
 // and 1 is 1ms sinusoid + 2ms pause
 void IRAM_ATTR ProcessIntPin()
 {
@@ -196,8 +193,7 @@ void setup()
   }
   else if (cause == ESP_SLEEP_WAKEUP_EXT0)
   {
-    // Prepare to store the duration in awake situation
-    // timestampWakeup = micros();
+    // Add half of the sleep duration to the wakeup timer (as it is not possible to measure the time asleep)
     timestamp += SLEEP_DURATION_SEC / 2;
   }
   else
@@ -222,6 +218,7 @@ void setup()
   pinMode(INT_PIN_RECEIVER, INPUT);
   attachInterrupt(digitalPinToInterrupt(INT_PIN_RECEIVER), ProcessIntPin, RISING);
 
+  // Used to go to sleep
   startMillis = millis();
 }
 
@@ -353,6 +350,7 @@ void Decode(String frameToBeDecoded, int time)
   Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
   Serial.printf("Battery : %s, ", Batt);
   Serial.printf("Checksum : %s\n", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
+  Serial.flush();
 
   // Print data on SSD1306 screen
   if (ChecksumCalc == ChesumMsg)
@@ -378,7 +376,7 @@ void loop()
   if (millis() - startMillis < TIME_TO_SLEEP)
   {
 
-    // When button is pressed, raz of wake up timer
+    // When button is pressed, raz of wake up timer & update time
     if (digitalRead(PIN_WAKE_UP) == LOW)
     {
       startMillis = millis();
