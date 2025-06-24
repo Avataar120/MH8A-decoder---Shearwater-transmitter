@@ -14,7 +14,8 @@
 #define TIME_END_FRAME 15000 // us
 #define TIMEOUT 8000000      // us
 
-#define TIME_TO_SLEEP 60000 // ms
+#define TIME_TO_SLEEP 60000  // ms
+#define SLEEP_DURATION_SEC 5 // s
 
 #define NB_BATTERY_FILTER 5 // # of values for filtering
 
@@ -36,6 +37,8 @@ volatile char bufferReception[64] = {0};
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 unsigned long startMillis;
+RTC_DATA_ATTR uint64_t timestamp = 0;
+// uint64_t timestampWakeup = 0;
 
 // Read battery voltage and filter it on NB_BATTERY_FILTER values
 float ComputeBatteryVoltage()
@@ -87,11 +90,11 @@ float ComputeBatteryVoltage()
       FirstTime = 0;
     }
     else
-      display.fillRect(64, 48, 64, 16, BLACK);
+      display.fillRect(95, 48, 128 - 95, 16, BLACK);
 
     display.setTextSize(1);
-    display.setCursor(0, 56);
-    display.printf("              %.2f V", Result);
+    display.setCursor(95, 52);
+    display.printf("%.2fV", Result);
     display.display();
     display.setTextSize(2);
   }
@@ -148,6 +151,7 @@ void deactivateBoardPower()
   digitalWrite(PIN_MOSFET_33V, HIGH); // Mosfet deactivated when grid at 3.3v
   pinMode(PIN_MOSFET_33V, INPUT);
   gpio_hold_en((gpio_num_t)PIN_MOSFET_33V);
+
   gpio_deep_sleep_hold_en();
 }
 
@@ -178,6 +182,29 @@ void IRAM_ATTR ProcessIntPin()
 
 void setup()
 {
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+
+  if (cause == ESP_SLEEP_WAKEUP_TIMER)
+  {
+    // if wakeup by timer, add sleep duration to global timestamp
+    timestamp += SLEEP_DURATION_SEC;
+
+    // Immediately go back to deep sleep
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_WAKE_UP, LOW);
+    esp_sleep_enable_timer_wakeup(SLEEP_DURATION_SEC * 1000000ULL);
+    esp_deep_sleep_start();
+  }
+  else if (cause == ESP_SLEEP_WAKEUP_EXT0)
+  {
+    // Prepare to store the duration in awake situation
+    // timestampWakeup = micros();
+    timestamp += SLEEP_DURATION_SEC / 2;
+  }
+  else
+  {
+    // First start
+    timestamp = 1735689600; // 01/01/2025 - 00:00:00
+  }
 
   // Serial init
   Serial.begin(115200);
@@ -205,6 +232,13 @@ void goToSleep()
 
   // Wake up with GPIO
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_WAKE_UP, LOW);
+
+  // Wake up with Timer
+  esp_sleep_enable_timer_wakeup(SLEEP_DURATION_SEC * 1000000ULL);
+
+  // Update timestamp
+  timestamp += micros() / 1000000;
+
   esp_deep_sleep_start();
 }
 
@@ -237,7 +271,7 @@ inline String GetChar(String s)
 }
 
 // Display live indicator
-void LiveIndicator()
+void LiveIndicatorAndTime()
 {
   const char Buffer[4] = {'|',
                           '/',
@@ -245,16 +279,26 @@ void LiveIndicator()
 
   static char index = 0;
 
-  if (FirstTime)
-  {
-    display.fillRect(0, 48, 128, 16, BLACK);
-    FirstTime = 0;
-  }
-  else
-    display.fillRect(0, 48, 64, 16, BLACK);
-
   display.setCursor(0, 48);
+  display.setTextSize(1);
+
+  time_t now = timestamp + micros() / 1000000;
+
+  struct tm t;
+  localtime_r(&now, &t);
+
+  display.fillRect(0, 48, 95, 16, BLACK);
+
+  display.drawLine(0, 47, 128, 47, WHITE);
+  display.printf("%02d-%02d-%02d\n%02d:%02d:%02d",
+                 t.tm_year + 1900 - 2000, t.tm_mon + 1, t.tm_mday,
+                 t.tm_hour, t.tm_min, t.tm_sec);
+
+  display.setCursor(64, 52);
   display.printf("%c", Buffer[index]);
+
+  display.display();
+  display.setTextSize(2);
 
   index++;
   if (index >= 4)
@@ -319,13 +363,8 @@ void Decode(String frameToBeDecoded, int time)
     display.printf("P : %.2f\n", Pressure * 2 / 14.504);
     display.printf("B : %s\n", Batt);
 
-    // Update the live indicator in the bottom left of the screen
-    LiveIndicator();
-    display.setCursor(20, 56);
-    display.setTextSize(1);
-    display.printf("%.1f s", float(time) / 1000000);
-    display.display();
-    display.setTextSize(2);
+    // Update the live indicator & time
+    LiveIndicatorAndTime();
   }
 }
 
@@ -341,7 +380,10 @@ void loop()
 
     // When button is pressed, raz of wake up timer
     if (digitalRead(PIN_WAKE_UP) == LOW)
+    {
       startMillis = millis();
+      LiveIndicatorAndTime();
+    }
 
     // Compute battery level of the receiver
     ComputeBatteryVoltage();
@@ -370,7 +412,7 @@ void loop()
       Serial.printf("No more communication\n");
 
       display.fillRect(0, 48, 64, 16, BLACK);
-      display.setCursor(0, 56);
+      display.setCursor(0, 52);
       display.setTextSize(1);
       display.printf("No comm");
       display.display();
