@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_SSD1306.h>
+#include "main.h"
+#include "web.h"
 
 #define INT_PIN_RECEIVER 4 // GPIO4
 #define ADC_PIN_BATTERY 10 // GPIO10
@@ -37,7 +39,11 @@ volatile char bufferReception[64] = {0};
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 unsigned long startMillis;
+
+// Section of memory saved during deep sleep of ESP32
 RTC_DATA_ATTR uint64_t timestamp = 0;
+RTC_DATA_ATTR tHistory history[HISTORY_LENGTH];
+RTC_DATA_ATTR int historyIndex = 0;
 
 // Read battery voltage and filter it on NB_BATTERY_FILTER values
 void ComputeBatteryVoltage()
@@ -274,7 +280,7 @@ void LiveIndicatorAndTime()
                           '/',
                           '-', '\\'};
 
-  static char index = 0;
+  static unsigned char index = 0;
 
   display.setCursor(0, 48);
   display.setTextSize(1);
@@ -300,6 +306,11 @@ void LiveIndicatorAndTime()
   index++;
   if (index >= 4)
     index = 0;
+}
+
+void razTimerGoToSleep()
+{
+  startMillis = millis();
 }
 
 // This function will decode the frame that has been received
@@ -346,11 +357,12 @@ void Decode(String frameToBeDecoded, int time)
   int ChesumMsg = std::stoi(frameToBeDecoded.substring(50, 58).c_str(), nullptr, 2);
 
   // Print all data
-  Serial.printf("ID : %s, ", ID.c_str());
-  Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
-  Serial.printf("Battery : %s, ", Batt);
-  Serial.printf("Checksum : %s\n", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
-  Serial.flush();
+  // Serial.printf("Time : %.1f, ", float(time) / 1000000);
+  // Serial.printf("ID : %s, ", ID.c_str());
+  // Serial.printf("Pressure : %d PSI - %.2f bars, ", Pressure * 2, Pressure * 2 / 14.504);
+  // Serial.printf("Battery : %s, ", Batt.c_str());
+  // Serial.printf("Checksum : %s\n", (ChecksumCalc == ChesumMsg) ? "OK" : "NOK");
+  // Serial.flush();
 
   // Print data on SSD1306 screen
   if (ChecksumCalc == ChesumMsg)
@@ -359,11 +371,32 @@ void Decode(String frameToBeDecoded, int time)
     display.setCursor(0, 0);
     display.printf("ID: %s\n", ID.c_str());
     display.printf("P : %.2f\n", Pressure * 2 / 14.504);
-    display.printf("B : %s\n", Batt);
+    display.printf("B : %s\n", Batt.c_str());
+
+    time_t now = timestamp + micros() / 1000000;
+    struct tm t;
+    localtime_r(&now, &t);
+
+    unsigned char index = historyIndex % HISTORY_LENGTH;
+
+    history[index].num = historyIndex;
+    strcpy(history[index].ID, ID.c_str());
+    history[index].Pressure = Pressure;
+    strcpy(history[index].Battery, Batt.c_str());
+
+    history[index].time = t;
+
+    historyIndex++;
 
     // Update the live indicator & time
     LiveIndicatorAndTime();
+    razTimerGoToSleep();
   }
+}
+
+void updateTime(time_t epoch)
+{
+  timestamp = epoch;
 }
 
 void loop()
@@ -371,6 +404,9 @@ void loop()
 
   long TimeFrame = micros();
   static bool NoComm = false;
+  static int TimeToActivateWeb = 0;
+
+  loopWeb();
 
   // Go to sleep after xx secods
   if (millis() - startMillis < TIME_TO_SLEEP)
@@ -379,8 +415,31 @@ void loop()
     // When button is pressed, raz of wake up timer & update time
     if (digitalRead(PIN_WAKE_UP) == LOW)
     {
-      startMillis = millis();
+      razTimerGoToSleep();
       LiveIndicatorAndTime();
+
+      if (millis() - TimeToActivateWeb > 2000)
+      {
+        initWeb();
+
+        display.setCursor(0, 48);
+        display.setTextSize(1);
+
+        display.fillRect(0, 48, 95, 16, BLACK);
+        display.drawLine(0, 47, 128, 47, WHITE);
+
+        display.setCursor(0, 52);
+        display.printf("Wifi Activated");
+
+        display.display();
+        display.setTextSize(2);
+
+        sleep(2);
+      }
+    }
+    else
+    {
+      TimeToActivateWeb = millis();
     }
 
     // Compute battery level of the receiver
@@ -391,9 +450,6 @@ void loop()
     {
       // Comm active as we received a frame
       NoComm = false;
-
-      // Display the time
-      Serial.printf("Time : %.1f, ", float(TimeFrame) / 1000000);
 
       // Decode the frame and display it on the console
       frame = (char *)bufferReception;
