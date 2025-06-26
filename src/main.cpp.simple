@@ -1,0 +1,18 @@
+#include <Arduino.h>
+
+void setup()
+{
+
+    // Serial init
+    Serial.begin(115200);
+    delay(500);
+
+    Serial.println("OK");
+
+    while (1)
+        ;
+}
+
+void loop()
+{
+}
