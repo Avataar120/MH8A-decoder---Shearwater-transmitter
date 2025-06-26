@@ -9,6 +9,12 @@ typedef struct
     char Battery[9];
 } tHistory;
 
-extern void updateTime(time_t epoch);
+void LiveIndicatorAndTime();
+
+void razTimerGoToSleep();
+
+void goToSleep();
+
+void updateTime(time_t epoch);
 
 #define HISTORY_LENGTH 100
