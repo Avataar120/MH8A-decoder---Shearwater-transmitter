@@ -40,3 +40,20 @@ Read the values on the console
 ![image](https://github.com/user-attachments/assets/74292ec7-edca-479f-89b8-f87916f0eca0)
 
 In this example, I closed the tank valve and I released a little bit of pressure several times to see the impact on the values
+
+## From v4.0 :
+
+I have added :
+- OLED siplay SSD1306 support
+- Deep sleep to allow battery operation (go to deep sleep 1min after last reading or last press on button GPIO0)
+- Wifi AP mode (press 2s on button - GPIO0 to activate the wifi) - AP SSID = TankReader, Password = 12345678 - URL = tankreader.local
+- History of readings (on the web page)
+- Measurement of power supply batterie
+
+Few pictures :
+
+![image](https://github.com/user-attachments/assets/de334248-becf-435d-b34b-929306a8a545)
+
+![image](https://github.com/user-attachments/assets/cff783b0-ddd5-403d-9f21-708ec120162d)
+
+![image](https://github.com/user-attachments/assets/b3d4c423-8d41-451b-8876-c0e820168df6)
