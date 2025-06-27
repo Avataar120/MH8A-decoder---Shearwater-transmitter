@@ -57,7 +57,7 @@ Few pictures :
 
 ![image](https://github.com/user-attachments/assets/cff783b0-ddd5-403d-9f21-708ec120162d)
 
-![image](https://github.com/user-attachments/assets/a215acc7-9553-4d6e-a458-e8d4061c4b50)
+![image](https://github.com/user-attachments/assets/0be06a5f-354d-409e-9563-4a95473a7ffb)
 
 ![image](https://github.com/user-attachments/assets/7f6f1839-43d2-46a5-a604-ba0bb8229281)
 
