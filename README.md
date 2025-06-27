@@ -49,6 +49,7 @@ I have added :
 - Wifi AP mode (press 2s on button - GPIO0 to activate the wifi) - AP SSID = TankReader, Password = 12345678 - URL = tankreader.local
 - History of readings (on the web page)
 - Measurement of power supply battery (bottom right part of the screen)
+- My DIY PCB to support display, operational amplifier for signal better processing, ...
 
 Few pictures :
 
@@ -57,4 +58,7 @@ Few pictures :
 ![image](https://github.com/user-attachments/assets/cff783b0-ddd5-403d-9f21-708ec120162d)
 
 ![image](https://github.com/user-attachments/assets/a215acc7-9553-4d6e-a458-e8d4061c4b50)
+
+![image](https://github.com/user-attachments/assets/7f6f1839-43d2-46a5-a604-ba0bb8229281)
+
 
