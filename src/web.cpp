@@ -107,16 +107,16 @@ void handleRoot()
 
     <!-- Formulaire -->
     <div class="form-container">
-      <h3>Mise à jour date/heure</h3>
+      <h3>Time update</h3>
       <div>
-        <label>Jour:</label><input type="number" id="day" min="1" max="31"><br>
-        <label>Mois:</label><input type="number" id="month" min="1" max="12"><br>
-        <label>Année:</label><input type="number" id="year" min="2024" max="2099"><br>
-        <label>Heure:</label><input type="number" id="hour" min="0" max="23"><br>
-        <label>Minute:</label><input type="number" id="minute" min="0" max="59"><br>
-        <label>Seconde:</label><input type="number" id="second" min="0" max="59"><br>
-        <button onclick="fillWithBrowserTime()">Heure navigateur</button>
-        <button onclick="sendDateTime()">Mettre à jour</button>
+        <label>Day:</label><input type="number" id="day" min="1" max="31"><br>
+        <label>Month:</label><input type="number" id="month" min="1" max="12"><br>
+        <label>Year:</label><input type="number" id="year" min="2024" max="2099"><br>
+        <label>Hours:</label><input type="number" id="hour" min="0" max="23"><br>
+        <label>Minutes:</label><input type="number" id="minute" min="0" max="59"><br>
+        <label>Secondes:</label><input type="number" id="second" min="0" max="59"><br>
+        <button onclick="fillWithBrowserTime()">Browser time</button>
+        <button onclick="sendDateTime()">Update</button>
       </div>
     </div>
   </div>
@@ -250,7 +250,7 @@ void handleSetTime()
   }
 
   String body = server.arg("plain");
-  StaticJsonDocument<200> doc;
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, body);
 
   if (error)
@@ -288,7 +288,7 @@ void handleSetTime()
     return;
   }
 
-  struct timeval now = {.tv_sec = epoch};
+  struct timeval now = {.tv_sec = epoch, .tv_usec = 0};
   settimeofday(&now, nullptr);
   updateTime(epoch);
 
