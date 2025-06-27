@@ -44,11 +44,11 @@ In this example, I closed the tank valve and I released a little bit of pressure
 ## From v4.0 :
 
 I have added :
-- OLED siplay SSD1306 support
+- OLED siplay SSD1306 support (in blue = tank emitter values - in yellow = additional information (time / device battery))
 - Deep sleep to allow battery operation (go to deep sleep 1min after last reading or last press on button GPIO0)
 - Wifi AP mode (press 2s on button - GPIO0 to activate the wifi) - AP SSID = TankReader, Password = 12345678 - URL = tankreader.local
 - History of readings (on the web page)
-- Measurement of power supply batterie
+- Measurement of power supply battery (bottom right part of the screen)
 
 Few pictures :
 
