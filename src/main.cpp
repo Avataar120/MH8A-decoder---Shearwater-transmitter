@@ -127,6 +127,9 @@ void setup()
   analogSetAttenuation(ADC_11db);
 
   activateBoardPower();
+
+  delay(200);
+
   initDisplay();
   initMH8A();
 
